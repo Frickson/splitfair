@@ -1,3 +1,16 @@
+## Google sign-in setup (required to activate the new button)
+
+The frontend now offers **Continue with Google**. It uses Supabase OAuth and does not send email magic links.
+
+1. Go to [Google Cloud Console → Auth Platform → Clients](https://console.cloud.google.com/auth/clients). Create or select a Google Cloud project, configure the OAuth consent screen (External; add test users while in Testing), and create a **Web application** OAuth client.
+2. Set **Authorized JavaScript origins** to `https://frickson.github.io`.
+3. Set **Authorized redirect URIs** to **`https://jprqfryawhffqambonbs.supabase.co/auth/v1/callback`**. This is the Google → Supabase callback, **not** your GitHub Pages URL.
+4. In [Supabase Authentication → Providers](https://supabase.com/dashboard/project/jprqfryawhffqambonbs/auth/providers), open **Google**, enable it, paste the Google OAuth **Client ID and Client Secret**, and save. Keep the secret only in Supabase / Google Cloud; **never commit it to GitHub**.
+5. In [Supabase Authentication → URL Configuration](https://supabase.com/dashboard/project/jprqfryawhffqambonbs/auth/url-configuration), set **Site URL** to `https://frickson.github.io/splitfair/` and add that exact URL to **Redirect URLs**. Remove localhost as the Site URL.
+6. Open [SplitFair](https://frickson.github.io/splitfair/), refresh, choose **Continue with Google**, and test using a permitted Google account. For broad access, finish Google's OAuth app publication / verification requirements.
+
+If the Google provider isn't configured, the button won't work yet. Email magic link remains an optional fallback subject to Supabase SMTP email limits.
+
 ## Live deployment state (4 November 2026)
 
 - GitHub repository: https://github.com/Frickson/splitfair
@@ -6,13 +19,13 @@
 - Database tables exist with RLS; browser-safe credentials are configured in `config.js`.
 - Configure GitHub Pages under repository **Settings → Pages → Deploy from a branch → main → /(root)**.
 - Configure Supabase **Authentication → URL Configuration**: Site URL `https://frickson.github.io/splitfair/` and redirect allow list `https://frickson.github.io/splitfair/**`.
-- After Pages and redirects are configured, test login with two separate accounts. Email service rate limits apply.
+- After Google OAuth client/provider and Pages redirects are configured, test login with two separate Google accounts. Email fallback remains rate-limited.
 
 The schema deployed on Supabase is the current source of truth. If restoring from older downloaded ZIP files, include the `restrict_splitfair_function_access` migration.
 
 # SplitFair Cloud — GitHub Pages + Supabase
 
-A browser-based Splitwise-style shared-expense application. Includes email magic-link authentication, shared groups using invite codes, equal/exact/percentage splits, balances, simplified settlements, payment history, and Supabase Realtime updates. Currency is per group (no FX conversion).
+A browser-based Splitwise-style shared-expense application. Includes Google OAuth login (plus optional email magic-link authentication), shared groups using invite codes, equal/exact/percentage splits, balances, simplified settlements, payment history, and Supabase Realtime updates. Currency is per group (no FX conversion).
 
 ## 1. Create your database
 
