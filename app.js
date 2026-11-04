@@ -12,6 +12,47 @@ const person=id=>members.find(m=>m.user_id===id)?.display_name||'Member';
 const view=v=>['setup','auth','workspace','groupDialog'].forEach(id=>show(id,id===v));
 const unwrap=(r)=>{if(r.error)throw r.error;return r.data};
 const equal=(n,ids)=>Object.fromEntries(ids.map((id,i)=>[id,Math.floor(n/ids.length)+(i<n%ids.length?1:0)]));
+// Invite tokens are the existing random group invite codes; no separate referral database is needed.
+const INVITE_KEY='splitfair-pending-invite-v1';
+const INVITE_MAX_AGE=48*60*60*1000;
+const validInvite=code=>/^[A-F0-9]{18}$/.test(code);
+function captureInviteLink(){
+ const url=new URL(window.location.href);
+ const raw=url.searchParams.get('invite');
+ if(raw===null)return;
+ const code=raw.trim().toUpperCase();
+ if(validInvite(code))localStorage.setItem(INVITE_KEY,JSON.stringify({code,savedAt:Date.now()}));
+ else queueMicrotask(()=>notify('This referral link is invalid. Ask your friend for a new link.'));
+ url.searchParams.delete('invite');
+ history.replaceState(history.state,'',url.pathname+url.search+url.hash);
+}
+function pendingInvite(){
+ try{
+  const item=JSON.parse(localStorage.getItem(INVITE_KEY)||'null');
+  if(item&&validInvite(item.code)&&Number.isFinite(item.savedAt)&&Date.now()-item.savedAt>=0&&Date.now()-item.savedAt<INVITE_MAX_AGE)return item.code;
+ }catch(e){}
+ localStorage.removeItem(INVITE_KEY);
+ return null;
+}
+let inviteJoining=false;
+async function acceptPendingInvite(user){
+ const code=pendingInvite();
+ if(!code||inviteJoining)return null;
+ inviteJoining=true;
+ const meta=user.user_metadata||{};
+ const displayName=String(meta.full_name||meta.name||user.email?.split('@')[0]||'Member').trim().slice(0,80)||'Member';
+ try{
+  const id=unwrap(await client.rpc('join_split_group',{p_code:code,p_display_name:displayName}));
+  localStorage.removeItem(INVITE_KEY);
+  notify('Referral accepted! You joined the group.');
+  return id;
+ }catch(err){
+  // Do not retry a permanently invalid code on every reload. Transient errors can be retried.
+  if(/invalid invite code|invalid invite details/i.test(err.message||''))localStorage.removeItem(INVITE_KEY);
+  notify('Could not join from referral link: '+(err.message||'Please try again.'));
+  return null;
+ }finally{inviteJoining=false}
+}
 const calculate=()=>{
  const b=Object.fromEntries(members.map(x=>[x.user_id,0]));
  for(const e of expenses){b[e.paid_by]=(b[e.paid_by]||0)+Number(e.amount_cents);for(const [id,v] of Object.entries(e.shares))b[id]=(b[id]||0)-Number(v)}
@@ -25,13 +66,14 @@ const calculate=()=>{
 async function loadGroups(preferred){
  current=unwrap(await client.auth.getUser()).user;
  if(!current){view('auth');return}
+ const joinedByReferral=await acceptPendingInvite(current);
  $('identity').textContent=current.email||'';
  show('logout');
  const memberships=unwrap(await client.from('group_members').select('group_id').eq('user_id',current.id));
  const ids=memberships.map(x=>x.group_id);
  if(!ids.length){groups=[];group=null;view('workspace');show('noGroups');show('groupContent',false);show('groupShare',false);$('groupSelect').innerHTML='';return}
  groups=unwrap(await client.from('groups').select('*').in('id',ids).order('created_at',{ascending:false}));
- group=groups.find(x=>x.id===(preferred||localStorage.getItem('splitfair-last-group')))||groups[0];
+ group=groups.find(x=>x.id===(joinedByReferral||preferred||localStorage.getItem('splitfair-last-group')))||groups[0];
  $('groupSelect').innerHTML=groups.map(x=>'<option value="'+safe(x.id)+'">'+safe(x.name)+'</option>').join('');
  $('groupSelect').value=group.id;
  view('workspace');show('noGroups',false);show('groupContent');
@@ -63,8 +105,19 @@ async function refresh(){if(busy||!group)return;busy=true;try{
  members=unwrap(m);expenses=unwrap(e);payments=unwrap(p);if(group?.id===id)render();
  }catch(e){notify(e.message)}finally{busy=false}}
 function render(){
- $('groupShare').innerHTML='<div class="row"><span>Invite code: <strong>'+safe(group.invite_code)+'</strong></span><button id="copyInvite" class="btn slim">Copy</button></div><div class="tiny muted">Share privately. Anyone signed in with the code can join.</div>';
- show('groupShare');$('copyInvite').onclick=()=>navigator.clipboard.writeText(group.invite_code).then(()=>notify('Invite code copied')).catch(()=>notify('Copy the code above'));
+ $('groupShare').innerHTML='<div class="row"><span>Invite code: <strong>'+safe(group.invite_code)+'</strong></span><div class="actions"><button type="button" id="copyInvite" class="btn slim">Copy code</button><button type="button" id="generateReferral" class="btn slim primary">Generate referral link</button></div></div><div id="referralResult" class="hidden" style="margin-top:12px"><label class="tiny" for="referralUrl">Share this group referral link</label><div class="row"><input id="referralUrl" readonly aria-label="Group referral link" style="flex:1;min-width:170px"><button type="button" id="copyReferral" class="btn slim">Copy link</button></div></div><div class="tiny muted" style="margin-top:10px">Anyone with the link can join this group automatically after signing in. Share it only with people you trust.</div>';
+ show('groupShare');
+ $('copyInvite').onclick=()=>navigator.clipboard.writeText(group.invite_code).then(()=>notify('Invite code copied')).catch(()=>notify('Copy the code above'));
+ $('generateReferral').onclick=()=>{
+  const referral=new URL(location.origin+location.pathname);
+  referral.searchParams.set('invite',group.invite_code);
+  const link=referral.toString();
+  $('referralUrl').value=link;
+  show('referralResult');
+  const copy=()=>navigator.clipboard.writeText(link).then(()=>notify('Referral link copied — send it to your friends.')).catch(()=>{ $('referralUrl').select();notify('Select and copy the link above.'); });
+  $('copyReferral').onclick=copy;
+  copy();
+ };
  $('members').innerHTML=members.map(m=>'<span class="member">'+safe(m.display_name)+(m.user_id===current.id?' (you)':'')+'</span>').join('');
  $('memberCount').textContent=members.length+' people';
  $('spent').textContent=money(expenses.reduce((s,x)=>s+Number(x.amount_cents),0));
@@ -192,6 +245,7 @@ async function init(){
  if(!url||!key){view('setup');return}
  client=createClient(url,key,{auth:{persistSession:true,detectSessionInUrl:true,autoRefreshToken:true}});
  client.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_OUT'){current=null;view('auth')}if(event==='SIGNED_IN'&&session?.user&&!current){queueMicrotask(()=>loadGroups().catch(e=>notify(e.message))) }});
- try{const {data:{session}}=await client.auth.getSession();if(session?.user)await loadGroups();else view('auth')}catch(e){view('auth');notify(e.message)}
+ try{const {data:{session}}=await client.auth.getSession();if(session?.user)await loadGroups();else {view('auth');if(pendingInvite()){$('authStatus').textContent='You were invited to a SplitFair group. Sign in with Google to join automatically.';show('authStatus')}}}catch(e){view('auth');notify(e.message)}
 }
+captureInviteLink();
 init();
