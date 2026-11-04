@@ -1,3 +1,15 @@
+## Referral links and automatic group joining
+
+1. Sign in and select your SplitFair group.
+2. Click **Generate referral link** in the group's invitation panel, then **Copy link**.
+3. Send the link to your friend. The link has the form `https://frickson.github.io/splitfair/?invite=YOUR_GROUP_INVITE_CODE`.
+4. Your friend opens the link and signs in with Google (or the email fallback). SplitFair remembers the invite during login, then automatically joins them to the group.
+5. If your friend is already signed in, opening the link joins them automatically without an extra prompt.
+
+The link's code is the group's existing invite code. Do not share it publicly: anyone who has it and signs in can join. Pending invitations are stored in the browser for up to 48 hours, cleared after a successful join, and may be retried after transient errors. The recipient must use the same browser and browser profile when returning from OAuth. This version does not track who referred whom or provide referral rewards.
+
+**Browser tab logo:** `favicon.svg` is linked from `index.html`. If it doesn't appear immediately, refresh the page without cache or reopen the tab after GitHub Pages deploys the updated files.
+
 ## Google sign-in setup (required to activate the new button)
 
 The frontend now offers **Continue with Google**. It uses Supabase OAuth and does not send email magic links.
