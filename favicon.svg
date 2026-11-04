@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="SplitFair">
+  <rect width="64" height="64" rx="16" fill="#087f69"/>
+  <g fill="none" stroke="#ffffff" stroke-width="5.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 22 C20 16 27 28 35 22 S47 16 52 20"/>
+    <path d="M12 33 C20 27 27 39 35 33 S47 27 52 31"/>
+    <path d="M12 44 C20 38 27 50 35 44 S47 38 52 42"/>
+  </g>
+</svg>
