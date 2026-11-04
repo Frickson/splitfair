@@ -1,3 +1,21 @@
+## Profile and settlement screenshot proof
+
+**Edit your profile**
+1. Sign in and click **My profile** in the top bar.
+2. Change your display name (1–80 characters) and click **Save profile**.
+3. The name is saved in Supabase Auth metadata and synchronized to all existing SplitFair group memberships. When joining another group, your saved display name is prefilled.
+
+**Record a payment with optional screenshot**
+1. Select a group and click **Record paid** on a settlement you owe.
+2. Optionally choose a payment screenshot (PNG, JPEG, or WebP, max **5 MB**). The browser shows a preview.
+3. Click **Confirm payment**. The screenshot uploads first to a private Supabase Storage bucket, followed by the payment database record.
+4. In the group's **History**, click **View proof** on a payment to open a short-lived signed URL. Only authenticated group members can request these signed URLs. Anyone holding a signed URL can access it until it expires (currently 60 seconds).
+5. Payment creators can **Undo** their payment. The app attempts to delete its associated file after deleting the payment record. If cleanup fails, a private orphaned file can remain; administrators should audit and clean up orphaned files periodically.
+
+The private bucket is named `splitfair-payment-proofs`. Storage policies allow group members to read proofs, and a signed-in member may upload only inside `<group-id>/<their-user-id>/`. Only the uploader can remove their own proof. A server-side database constraint validates payment proof paths. Image file content is not independently malware-scanned; users should avoid sharing sensitive account details in screenshots.
+
+**Important:** These screenshots are evidence submitted by users, not independently verified bank transactions. Recording a payment does **not** transfer money. If an image upload succeeds but the record cannot be saved, the app attempts to remove the uploaded image. Existing payments without screenshots continue to work.
+
 ## Referral links and automatic group joining
 
 1. Sign in and select your SplitFair group.
@@ -63,7 +81,7 @@ A browser-based Splitwise-style shared-expense application. Includes Google OAut
 - Group data is stored in Supabase, with RLS: only signed-in group members can read it. Members may create expenses; only the person shown as paying a settlement may record that payment. Expense and payment creators may delete their own records, and expense creators may edit their own records.
 - Invite codes are sensitive: anyone who knows a code and has an account can join a group. The current version has no invite-code rotation, moderation or rate-limit for guessing; codes are high-entropy random values. Do not expose invite codes publicly.
 - Expense totals and participants are checked on the server. Amounts are integer cents. Payments are recorded entries, **not** bank transfers.
-- This is an MVP. It has no email invitations, receipt uploads, expense categories, multi-currency conversions, or offline write queue.
+- This is an MVP. It has no email invitations, expense receipt uploads, expense categories, multi-currency conversions, or offline write queue.
 - Realtime messages refresh client state; if realtime isn't available use **Refresh**.
 - For a production public service, add abuse prevention, monitoring, backups, account deletion and privacy policy.
 - Opening `index.html` using `file://` may fail due to browser module/CORS restrictions. Serve it through GitHub Pages or a local HTTP server (`python3 -m http.server 8000`).
