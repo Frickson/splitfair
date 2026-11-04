@@ -1,3 +1,15 @@
+## Live deployment state (4 November 2026)
+
+- GitHub repository: https://github.com/Frickson/splitfair
+- Supabase project ID: `jprqfryawhffqambonbs` (Singapore)
+- Database migrations applied: `create_splitfair_schema`, `restrict_splitfair_function_access`
+- Database tables exist with RLS; browser-safe credentials are configured in `config.js`.
+- Configure GitHub Pages under repository **Settings → Pages → Deploy from a branch → main → /(root)**.
+- Configure Supabase **Authentication → URL Configuration**: Site URL `https://frickson.github.io/splitfair/` and redirect allow list `https://frickson.github.io/splitfair/**`.
+- After Pages and redirects are configured, test login with two separate accounts. Email service rate limits apply.
+
+The schema deployed on Supabase is the current source of truth. If restoring from older downloaded ZIP files, include the `restrict_splitfair_function_access` migration.
+
 # SplitFair Cloud — GitHub Pages + Supabase
 
 A browser-based Splitwise-style shared-expense application. Includes email magic-link authentication, shared groups using invite codes, equal/exact/percentage splits, balances, simplified settlements, payment history, and Supabase Realtime updates. Currency is per group (no FX conversion).
