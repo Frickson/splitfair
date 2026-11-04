@@ -140,6 +140,27 @@ $('groupForm').onsubmit=async e=>{
  try{const r=mode==='create'?await client.rpc('create_split_group',{p_name:$('newGroupName').value.trim(),p_currency:$('newCurrency').value,p_display_name:nickname}):await client.rpc('join_split_group',{p_code:$('inviteCode').value.trim(),p_display_name:nickname});
  const id=unwrap(r);$('groupForm').reset();notify(mode==='create'?'Group created':'Joined group');await loadGroups(id)}catch(err){notify(err.message)}
 };
+// Google OAuth uses Supabase as the callback host and returns to GitHub Pages after login.
+let googleLoginActive=false;
+$('googleLogin').onclick=async()=>{
+  if(googleLoginActive)return;
+  googleLoginActive=true;
+  const button=$('googleLogin');button.disabled=true;button.textContent='Opening Google sign-in…';
+  try{
+    const {error}=await client.auth.signInWithOAuth({
+      provider:'google',
+      options:{redirectTo:'https://frickson.github.io/splitfair/'}
+    });
+    if(error)throw error;
+  }catch(err){
+    const message=/provider.*(disabled|not enabled|unsupported)/i.test(err?.message||'')
+      ?'Google login is not enabled in Supabase yet. Configure Google OAuth in Supabase Authentication → Providers.'
+      :'Google sign-in failed: '+(err?.message||'unknown error');
+    $('authStatus').textContent=message;show('authStatus');notify(message);
+  }finally{
+    googleLoginActive=false;button.disabled=false;button.textContent='Continue with Google';
+  }
+};
 let authRequestActive=false;
 $('authForm').onsubmit=async e=>{
  e.preventDefault();
