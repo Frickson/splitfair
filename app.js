@@ -140,7 +140,30 @@ $('groupForm').onsubmit=async e=>{
  try{const r=mode==='create'?await client.rpc('create_split_group',{p_name:$('newGroupName').value.trim(),p_currency:$('newCurrency').value,p_display_name:nickname}):await client.rpc('join_split_group',{p_code:$('inviteCode').value.trim(),p_display_name:nickname});
  const id=unwrap(r);$('groupForm').reset();notify(mode==='create'?'Group created':'Joined group');await loadGroups(id)}catch(err){notify(err.message)}
 };
-$('authForm').onsubmit=async e=>{e.preventDefault();try{unwrap(await client.auth.signInWithOtp({email:$('email').value.trim(),options:{emailRedirectTo:location.origin+location.pathname}}));$('authStatus').textContent='Check your email for the sign-in link.';show('authStatus')}catch(err){notify(err.message)}};
+let authRequestActive=false;
+$('authForm').onsubmit=async e=>{
+ e.preventDefault();
+ if(authRequestActive)return;
+ const submit=$('authForm').querySelector('button');
+ const last=Number(sessionStorage.getItem('splitfair-last-email-request')||0);
+ if(Date.now()-last<60000){$('authStatus').textContent='A login email was just requested. Check your inbox and wait at least 60 seconds before trying again.';show('authStatus');return}
+ authRequestActive=true;submit.disabled=true;
+ try{
+   unwrap(await client.auth.signInWithOtp({email:$('email').value.trim(),options:{emailRedirectTo:'https://frickson.github.io/splitfair/'}}));
+   sessionStorage.setItem('splitfair-last-email-request',String(Date.now()));
+   $('authStatus').textContent='Check your inbox for the sign-in link. It should return to https://frickson.github.io/splitfair/.';
+   show('authStatus');
+ }catch(err){
+   const rateLimited=err?.status===429||/rate.?limit|too many/i.test(err?.message||'');
+   sessionStorage.setItem('splitfair-last-email-request',String(Date.now()));
+   $('authStatus').textContent=rateLimited?'Supabase email sending limit reached (built-in service: 2 emails per hour per project). Try later, or ask the administrator to configure custom SMTP.':'Login email failed: '+(err?.message||'unknown error');
+   show('authStatus');
+   notify($('authStatus').textContent);
+ }finally{
+   authRequestActive=false;
+   setTimeout(()=>{submit.disabled=false},60000);
+ }
+};
 $('logout').onclick=async()=>{await client.auth.signOut();location.reload()};
 $('setupForm').onsubmit=e=>{e.preventDefault();localStorage.setItem('splitfair-config',JSON.stringify({url:$('projectUrl').value.trim(),anonKey:$('publicKey').value.trim()}));location.reload()};
 async function init(){
