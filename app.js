@@ -9,7 +9,7 @@ const notify=(message)=>{const el=$('toast');el.textContent=message;show('toast'
 const amount=s=>{s=String(s).trim();if(!/^\d+(?:\.\d{1,2})?$/.test(s))return null;const [a,b='']=s.split('.');const n=Number(a)*100+Number(b.padEnd(2,'0'));return Number.isSafeInteger(n)?n:null};
 const money=n=>new Intl.NumberFormat('en-SG',{style:'currency',currency:group?.currency||'SGD'}).format(n/100);
 const person=id=>members.find(m=>m.user_id===id)?.display_name||'Member';
-const view=v=>['setup','auth','workspace','groupDialog'].forEach(id=>show(id,id===v));
+const view=v=>['setup','auth','workspace','groupDialog','profileDialog','paymentDialog'].forEach(id=>show(id,id===v));
 const unwrap=(r)=>{if(r.error)throw r.error;return r.data};
 const equal=(n,ids)=>Object.fromEntries(ids.map((id,i)=>[id,Math.floor(n/ids.length)+(i<n%ids.length?1:0)]));
 // Invite tokens are the existing random group invite codes; no separate referral database is needed.
@@ -40,7 +40,7 @@ async function acceptPendingInvite(user){
  if(!code||inviteJoining)return null;
  inviteJoining=true;
  const meta=user.user_metadata||{};
- const displayName=String(meta.full_name||meta.name||user.email?.split('@')[0]||'Member').trim().slice(0,80)||'Member';
+ const displayName=String(meta.display_name||meta.full_name||meta.name||user.email?.split('@')[0]||'Member').trim().slice(0,80)||'Member';
  try{
   const id=unwrap(await client.rpc('join_split_group',{p_code:code,p_display_name:displayName}));
   localStorage.removeItem(INVITE_KEY);
@@ -68,7 +68,7 @@ async function loadGroups(preferred){
  if(!current){view('auth');return}
  const joinedByReferral=await acceptPendingInvite(current);
  $('identity').textContent=current.email||'';
- show('logout');
+ show('logout');show('openProfile');
  const memberships=unwrap(await client.from('group_members').select('group_id').eq('user_id',current.id));
  const ids=memberships.map(x=>x.group_id);
  if(!ids.length){groups=[];group=null;view('workspace');show('noGroups');show('groupContent',false);show('groupShare',false);$('groupSelect').innerHTML='';return}
@@ -127,7 +127,7 @@ function render(){
  $('settlements').innerHTML=result.settle.length?result.settle.map(x=>'<div class="settlement"><span>'+safe(person(x.from))+' pays '+safe(person(x.to))+'</span><div class="actions"><strong>'+money(x.n)+'</strong><button class="btn slim" data-pay="'+x.from+'|'+x.to+'|'+x.n+'" '+(x.from===current.id?'':'disabled')+'>Record paid</button></div></div>').join(''):'<div class="empty">All settled ✓</div>';
  const history=[...expenses.map(x=>({...x,type:'expense'})),...payments.map(x=>({...x,type:'payment'}))].sort((a,b)=>b.created_at.localeCompare(a.created_at));
  $('historyCount').textContent=history.length+' items';
- $('history').innerHTML=history.length?history.map(x=>'<div class="history"><div class="info"><strong>'+safe(x.type==='expense'?x.title:'Payment recorded')+'</strong><div class="sub">'+(x.type==='expense'?'Paid by '+safe(person(x.paid_by)):safe(person(x.from_user))+' → '+safe(person(x.to_user)))+' · '+new Date(x.created_at).toLocaleDateString('en-SG')+'</div></div><div><div class="money">'+money(Number(x.amount_cents))+'</div><div class="actions">'+(x.created_by===current.id?(x.type==='expense'?'<button class="btn slim" data-edit="'+x.id+'">Edit</button>':'')+'<button class="btn slim danger" data-delete="'+x.type+'|'+x.id+'">'+(x.type==='payment'?'Undo':'Delete')+'</button>':'')+'</div></div></div>').join(''):'<div class="empty">No expenses yet</div>';
+ $('history').innerHTML=history.length?history.map(x=>'<div class="history"><div class="info"><strong>'+safe(x.type==='expense'?x.title:'Payment recorded')+'</strong><div class="sub">'+(x.type==='expense'?'Paid by '+safe(person(x.paid_by)):safe(person(x.from_user))+' → '+safe(person(x.to_user)))+' · '+new Date(x.created_at).toLocaleDateString('en-SG')+'</div></div><div><div class="money">'+money(Number(x.amount_cents))+'</div><div class="actions">'+(x.type==='payment'&&x.proof_path?'<button class="btn slim" data-view-proof="'+safe(x.id)+'">View proof</button>':'')+(x.created_by===current.id?(x.type==='expense'?'<button class="btn slim" data-edit="'+x.id+'">Edit</button>':'')+'<button class="btn slim danger" data-delete="'+x.type+'|'+x.id+'">'+(x.type==='payment'?'Undo':'Delete')+'</button>':'')+'</div></div></div>').join(''):'<div class="empty">No expenses yet</div>';
  $('payer').innerHTML=members.map(m=>'<option value="'+m.user_id+'">'+safe(m.display_name)+'</option>').join('');
  if(!edit)$('payer').value=current.id;
  renderPeople();
@@ -171,22 +171,115 @@ $('expenseForm').onsubmit=async event=>{
  try{unwrap(edit?await client.from('expenses').update(payload).eq('id',edit).eq('group_id',group.id):await client.from('expenses').insert(payload));notify(edit?'Expense updated':'Expense added');resetForm();await refresh()}catch(e){notify(e.message)}
 };
 $('history').onclick=async e=>{
+ const proofButton=e.target.closest('[data-view-proof]');
+ if(proofButton){
+  const payment=payments.find(x=>x.id===proofButton.dataset.viewProof);
+  if(!payment?.proof_path)return;
+  const original=proofButton.textContent;proofButton.disabled=true;proofButton.textContent='Opening…';
+  try{
+   const {data,error}=await client.storage.from('splitfair-payment-proofs').createSignedUrl(payment.proof_path,60);
+   if(error)throw error;
+   window.open(data.signedUrl,'_blank','noopener,noreferrer');
+  }catch(err){notify('Unable to open proof: '+(err.message||'Unknown error'))}
+  finally{proofButton.disabled=false;proofButton.textContent=original}
+  return;
+ }
  const editButton=e.target.closest('[data-edit]'),deleteButton=e.target.closest('[data-delete]');
  if(editButton){const x=expenses.find(x=>x.id===editButton.dataset.edit);if(!x)return;edit=x.id;selected=new Set(Object.keys(x.shares));$('expenseTitle').value=x.title;$('expenseAmount').value=(Number(x.amount_cents)/100).toFixed(2);$('splitMode').value='exact';renderPeople();$('payer').value=x.paid_by;$('expenseHeading').textContent='Edit expense';$('saveExpense').textContent='Save changes';show('cancelEdit');$('expenseForm').scrollIntoView();return}
  if(!deleteButton)return;const [type,id]=deleteButton.dataset.delete.split('|');
  if(!confirm('Delete this '+type+'?'))return;
- try{unwrap(await client.from(type==='expense'?'expenses':'payments').delete().eq('id',id).eq('group_id',group.id));notify('Deleted');await refresh()}catch(err){notify(err.message)}
+ try{
+  const previous=type==='payment'?payments.find(x=>x.id===id):null;
+  unwrap(await client.from(type==='expense'?'expenses':'payments').delete().eq('id',id).eq('group_id',group.id));
+  if(previous?.proof_path){
+   const cleanup=await client.storage.from('splitfair-payment-proofs').remove([previous.proof_path]);
+   if(cleanup.error)notify('Payment removed, but proof cleanup failed: '+cleanup.error.message);
+  }
+  notify('Deleted');await refresh();
+ }catch(err){notify(err.message)}
 };
-$('settlements').onclick=async e=>{
+let pendingPayment=null,proofPreviewUrl=null;
+function closePaymentDialog(){
+ pendingPayment=null;$('paymentForm').reset();
+ if(proofPreviewUrl){URL.revokeObjectURL(proofPreviewUrl);proofPreviewUrl=null}
+ show('paymentPreview',false);view('workspace');
+}
+$('settlements').onclick=e=>{
  const button=e.target.closest('[data-pay]');if(!button)return;
  const [from,to,n]=button.dataset.pay.split('|');if(from!==current.id)return;
- if(!confirm('Record '+money(Number(n))+' paid to '+person(to)+'? This does not transfer money.'))return;
- try{unwrap(await client.from('payments').insert({group_id:group.id,from_user:from,to_user:to,amount_cents:Number(n),created_by:current.id}));notify('Payment recorded');await refresh()}catch(err){notify(err.message)}
+ pendingPayment={groupId:group.id,from,to,amount:Number(n)};
+ $('paymentSummary').textContent='Record '+money(Number(n))+' paid to '+person(to)+'?';
+ $('paymentForm').reset();show('paymentPreview',false);view('paymentDialog');
+};
+$('closePayment').onclick=closePaymentDialog;
+$('cancelPayment').onclick=closePaymentDialog;
+$('paymentProof').onchange=()=>{
+ const file=$('paymentProof').files?.[0];
+ if(proofPreviewUrl){URL.revokeObjectURL(proofPreviewUrl);proofPreviewUrl=null}
+ show('paymentPreview',false);
+ if(!file)return;
+ if(!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>5242880||file.size===0){
+  $('paymentProof').value='';notify('Please choose a PNG, JPEG or WebP image up to 5 MB.');return;
+ }
+ proofPreviewUrl=URL.createObjectURL(file);$('paymentPreview').src=proofPreviewUrl;show('paymentPreview');
+};
+$('paymentForm').onsubmit=async e=>{
+ e.preventDefault();const pending=pendingPayment;if(!pending||pending.from!==current?.id||pending.groupId!==group?.id)return;
+ const file=$('paymentProof').files?.[0]||null;
+ if(file&&(!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>5242880||file.size===0)){
+  notify('Please choose a PNG, JPEG or WebP image up to 5 MB.');return;
+ }
+ const button=$('submitPayment');button.disabled=true;button.textContent='Saving payment…';
+ let proofPath=null;
+ try{
+  if(file){
+   const extension={'image/png':'png','image/jpeg':'jpg','image/webp':'webp'}[file.type];
+   proofPath=pending.groupId+'/'+current.id+'/'+crypto.randomUUID()+'.'+extension;
+   const upload=await client.storage.from('splitfair-payment-proofs').upload(proofPath,file,{contentType:file.type,upsert:false});
+   if(upload.error)throw upload.error;
+  }
+  const saved=await client.from('payments').insert({
+   group_id:pending.groupId,from_user:pending.from,to_user:pending.to,
+   amount_cents:pending.amount,created_by:current.id,proof_path:proofPath
+  });
+  if(saved.error)throw saved.error;
+  proofPath=null;closePaymentDialog();notify('Payment recorded');await refresh();
+ }catch(err){
+  if(proofPath)await client.storage.from('splitfair-payment-proofs').remove([proofPath]).catch(()=>{});
+  notify('Unable to save payment: '+(err.message||'Unknown error'));
+ }finally{button.disabled=false;button.textContent='Confirm payment'}
 };
 $('groupSelect').onchange=async e=>{group=groups.find(x=>x.id===e.target.value);try{await loadGroup()}catch(err){notify(err.message)}};
 $('reload').onclick=refresh;
+const currentProfileName=()=>{
+ const meta=current?.user_metadata||{};
+ return String(meta.display_name||members.find(m=>m.user_id===current?.id)?.display_name||meta.full_name||meta.name||current?.email?.split('@')[0]||'').trim().slice(0,80);
+};
+$('openProfile').onclick=()=>{
+ if(!current)return;
+ $('profileName').value=currentProfileName();$('profileEmail').value=current.email||'';
+ view('profileDialog');
+};
+$('closeProfile').onclick=()=>view('workspace');
+$('profileForm').onsubmit=async e=>{
+ e.preventDefault();if(!current)return;
+ const displayName=$('profileName').value.trim();
+ if(displayName.length<1||displayName.length>80){notify('Display name must be 1–80 characters.');return}
+ const button=$('saveProfile');button.disabled=true;button.textContent='Saving…';
+ try{
+  const result=await client.auth.updateUser({data:{display_name:displayName}});
+  if(result.error)throw result.error;
+  current=result.data.user;
+  const updated=await client.from('group_members').update({display_name:displayName}).eq('user_id',current.id);
+  if(updated.error)throw updated.error;
+  $('identity').textContent=displayName+' · '+(current.email||'');
+  view('workspace');notify('Profile saved.');
+  if(group)await refresh();
+ }catch(err){notify('Profile not fully saved: '+(err.message||'Unknown error'))}
+ finally{button.disabled=false;button.textContent='Save profile'}
+};
 let mode='create';
-const dialog=v=>{mode=v;$('dialogTitle').textContent=v==='create'?'Create group':'Join group';$('groupSubmit').textContent=v==='create'?'Create group':'Join group';show('newGroupFields',v==='create');show('joinGroupFields',v==='join');view('groupDialog')};
+const dialog=v=>{mode=v;$('dialogTitle').textContent=v==='create'?'Create group':'Join group';$('groupSubmit').textContent=v==='create'?'Create group':'Join group';show('newGroupFields',v==='create');show('joinGroupFields',v==='join');$('displayName').value=currentProfileName();view('groupDialog')};
 $('openCreate').onclick=()=>dialog('create');$('openJoin').onclick=()=>dialog('join');$('closeDialog').onclick=()=>view('workspace');
 $('groupForm').onsubmit=async e=>{
  e.preventDefault();const nickname=$('displayName').value.trim();if(!nickname){notify('Enter your name');return}
