@@ -159,11 +159,25 @@ function render(){
  $('balances').innerHTML=members.map(m=>'<div class="balance"><span>'+safe(m.display_name)+'</span><strong class="'+(result.b[m.user_id]>0?'positive':result.b[m.user_id]<0?'negative':'')+'">'+money(result.b[m.user_id]||0)+'</strong></div>').join('');
  $('settlements').innerHTML=result.settle.length?result.settle.map(x=>'<div class="settlement"><span>'+safe(person(x.from))+' pays '+safe(person(x.to))+'</span><div class="actions"><strong>'+money(x.n)+'</strong><button class="btn slim" data-pay="'+x.from+'|'+x.to+'|'+x.n+'" '+(x.from===current.id?'':'disabled')+'>Record paid</button></div></div>').join(''):'<div class="empty">All settled ✓</div>';
  const history=[...expenses.map(x=>({...x,type:'expense'})),...payments.map(x=>({...x,type:'payment'}))].sort((a,b)=>b.created_at.localeCompare(a.created_at));
- $('historyCount').textContent=history.length+' items';
- $('history').innerHTML=history.length?history.map(x=>'<div class="history"><div class="info"><strong>'+safe(x.type==='expense'?x.title:'Payment recorded')+'</strong><div class="sub">'+(x.type==='expense'?'Paid by '+safe(person(x.paid_by)):safe(person(x.from_user))+' → '+safe(person(x.to_user)))+' · '+new Date(x.created_at).toLocaleDateString('en-SG')+'</div></div><div><div class="money">'+money(Number(x.amount_cents))+'</div><div class="actions">'+(x.type==='payment'&&x.proof_path?'<button class="btn slim" data-view-proof="'+safe(x.id)+'">View proof</button>':'')+
- (x.type==='expense'&&x.receipt_path?'<button class="btn slim" data-view-receipt="'+safe(x.id)+'">View receipt</button><button class="btn slim" data-download-receipt="'+safe(x.id)+'">Download</button>':'')+
- (x.type==='expense'&&x.created_by===current.id?'<button class="btn slim" data-attach-receipt="'+safe(x.id)+'">'+(x.receipt_path?'Replace receipt':'Attach receipt')+'</button>':'')+
- (x.created_by===current.id?(x.type==='expense'?'<button class="btn slim" data-edit="'+x.id+'">Edit</button>':'')+'<button class="btn slim danger" data-delete="'+x.type+'|'+x.id+'">'+(x.type==='payment'?'Undo':'Delete')+'</button>':'')+'</div></div></div>').join(''):'<div class="empty">No expenses yet</div>';
+ $('historyCount').textContent=history.length+' '+(history.length===1?'item':'items');
+ $('history').innerHTML=history.length?history.map(x=>{
+   const expense=x.type==='expense',owner=x.created_by===current.id;
+   const description=expense?x.title:'Payment recorded';
+   const detail=expense?'Paid by '+safe(person(x.paid_by)):safe(person(x.from_user))+' → '+safe(person(x.to_user));
+   const controls=[];
+   if(!expense&&x.proof_path)controls.push('<button type="button" class="btn slim" data-view-proof="'+safe(x.id)+'">View proof</button>');
+   if(expense&&x.receipt_path){
+     controls.push('<button type="button" class="btn slim" data-view-receipt="'+safe(x.id)+'">View receipt</button>');
+     controls.push('<button type="button" class="btn slim" data-download-receipt="'+safe(x.id)+'">Download</button>');
+   }
+   if(expense&&owner)controls.push('<button type="button" class="btn slim" data-attach-receipt="'+safe(x.id)+'">'+(x.receipt_path?'Replace receipt':'Attach receipt')+'</button>');
+   if(owner){
+     if(expense)controls.push('<button type="button" class="btn slim" data-edit="'+safe(x.id)+'">Edit</button>');
+     controls.push('<button type="button" class="btn slim danger" data-delete="'+x.type+'|'+safe(x.id)+'">'+(expense?'Delete':'Undo')+'</button>');
+   }
+   return '<article class="history"><div class="history-main"><div class="info"><strong class="history-title">'+safe(description)+'</strong><div class="sub">'+detail+' · '+new Date(x.created_at).toLocaleDateString('en-SG')+'</div></div><div class="history-amount">'+money(Number(x.amount_cents))+'</div></div>'+
+     (controls.length?'<div class="history-actions">'+controls.join('')+'</div>':'')+'</article>';
+ }).join(''):'<div class="empty">No expenses yet</div>';
  $('payer').innerHTML=members.map(m=>'<option value="'+m.user_id+'">'+safe(m.display_name)+'</option>').join('');
  if(!edit)$('payer').value=current.id;
  renderPeople();
