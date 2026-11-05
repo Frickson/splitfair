@@ -70,7 +70,7 @@ Deno.serve(async req => {
   const controller = new AbortController();
   const timeout = setTimeout(()=>controller.abort(),25000);
   try {
-    const model = 'gemini-2.5-flash-lite';
+    const model = 'gemini-3.5-flash-lite';
     const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent';
     const result = await fetch(endpoint,{
       method:'POST',
@@ -81,7 +81,7 @@ Deno.serve(async req => {
           {text:'Extract receipt information from the attached photo. Look at image layout, not just OCR order. Merchant must be business name, never an address, date or table number. Final total includes taxes and service fees; never substitute subtotal. Read tilted receipts and partially obscured photos as best possible. Return unknown merchant as empty string and unreadable amount as null. Do not hallucinate. Do not treat credit-card digits as amounts. Return concise itemized lines when legible.'},
           {inline_data:{mime_type:mimeType,data:image}}
         ]}],
-        generationConfig:{temperature:0,responseMimeType:'application/json',responseSchema:schema,maxOutputTokens:1400}
+        generationConfig:{responseMimeType:'application/json',responseSchema:schema,maxOutputTokens:1400}
       })
     });
     const payload=await result.json().catch(()=>({}));
