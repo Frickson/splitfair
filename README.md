@@ -1,3 +1,16 @@
+## Expense History: private receipt attachments
+
+SplitFair now preserves expense receipt photos in a private Supabase Storage bucket, `splitfair-expense-receipts`, with the receipt's path stored in `public.expenses.receipt_path`. Photos are compressed in the browser to JPEG at up to 2100 pixels on the longest side (5 MB max) before uploading. The original uploaded image is sent separately to Gemini for extraction, so **Google still receives a copy of the image during scanning**.
+
+- **New expenses:** choose or photograph a receipt, review the extracted details, then save the expense. Once the expense is created, its image is uploaded to private Storage and linked to History.
+- **Existing expenses:** the person who created the expense can choose **Attach receipt** or **Replace receipt** directly in History without changing the split or total. This is also a way to attach a photo without running Gemini again.
+- **Group members:** choose **View receipt** to load it privately in a modal, or **Download** to save a JPEG. Private files are fetched through the authenticated Supabase Storage client and displayed with temporary local object URLs, not exposed as public links.
+- **Permissions:** only the expense creator can attach or replace its file; current group members can view/download; uploaders may delete their files. Existing expenses with no receipt remain valid. Deleted or replaced receipts are cleaned up on a best-effort basis.
+- **Limits:** receipts count toward Supabase's free-tier storage quota. Do not upload bank-card details or other information unrelated to splitting bills. Once uploaded, other current group members can download a copy; removing the source file cannot erase copies they have saved.
+- **Failure handling:** saving the expense and uploading its photo are separate steps. If the upload fails, the expense can still be saved; attach the photo later from History.
+
+Database migration: `migrations/add_private_expense_receipts.sql`.
+
 ## AI receipt scanning through Gemini (November 2026)
 
 The SplitFair receipt scanner now sends photos to a **Supabase Edge Function** (`scan-receipt`) that calls Google's Gemini Vision API to extract merchant, purchase date, currency, final total, subtotal, fees and item lines. It fills the description and amount fields, while the user must confirm before saving. It works on mobile browsers and desktops.
