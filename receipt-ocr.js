@@ -1,6 +1,30 @@
 // SplitFair receipt OCR: performed locally in the visitor's browser (no OCR API).
 // Tesseract.js is fetched on demand; input photos are not uploaded to Supabase.
 const OCR_MODULE = 'https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.esm.min.js';
+const OCR_CLASSIC = 'https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js';
+async function loadOcrFactory(onProgress){
+  // Some mobile browsers and privacy extensions block cross-origin ESM imports.
+  // The classic UMD build is a compatibility fallback, using the same free local OCR engine.
+  try {
+    const mod=await import(OCR_MODULE);
+    if(typeof mod.createWorker==='function')return mod.createWorker;
+    if(typeof mod.default?.createWorker==='function')return mod.default.createWorker;
+    throw Error('OCR module did not export createWorker');
+  }catch(moduleError){
+    onProgress('Trying browser-compatible OCR loader…');
+    if(typeof window.Tesseract?.createWorker==='function')return window.Tesseract.createWorker;
+    await new Promise((resolve,reject)=>{
+      const script=document.createElement('script');
+      script.src=OCR_CLASSIC;
+      script.async=true;
+      script.onload=resolve;
+      script.onerror=()=>reject(Error('OCR library could not load. Check your internet connection or browser content blocker.'));
+      document.head.appendChild(script);
+    });
+    if(typeof window.Tesseract?.createWorker!=='function')throw Error('OCR library was loaded but did not start.');
+    return window.Tesseract.createWorker;
+  }
+}
 const MAX_IMAGE_SIZE = 15 * 1024 * 1024;
 const MAX_IMAGE_SIDE = 1800;
 
@@ -36,12 +60,17 @@ export function parseReceiptText(text) {
   const dateMatch = lines.slice(0, 40).join(' ').match(/\b(?:20\d{2}[\/.-]\d{1,2}[\/.-]\d{1,2}|\d{1,2}[\/.-]\d{1,2}[\/.-](?:20)?\d{2})\b/);
   if (dateMatch) date = dateMatch[0];
 
-  const merchant = lines.slice(0, 8).find(line =>
+  const merchantCandidates = lines.slice(0, 8).filter(line =>
     line.length >= 3 && line.length <= 72 &&
     /[a-zA-Z]{3}/.test(line) &&
     !/\b(?:RECEIPT|INVOICE|DATE|TIME|TEL|PHONE|ADDRESS|TAX|GST|SST|REG\s*NO|TERMINAL|CARD|ORDER|WELCOME|THANK YOU|THANKS|CASHIER|CUSTOMER|TOTAL)\b/i.test(line) &&
     !/^\s*(?:\d|https?:\/\/|www\.)/i.test(line)
-  ) || '';
+  );
+  let merchant=merchantCandidates[0]||'';
+  // Restaurant names often appear on two lines (DINEFINE / RESTAURANT).
+  const nextName=merchantCandidates[1]||'';
+  if(merchant && /^(RESTAURANT|CAFE|CAFÉ|BISTRO|BAR|KITCHEN|BAKERY|GRILL|FOOD\s+COURT)$/i.test(nextName))
+    merchant += ' '+nextName;
 
   const candidates = [];
   lines.forEach((line, index) => {
@@ -96,7 +125,7 @@ export async function scanReceipt(file, onProgress = () => {}) {
   onProgress('Preparing receipt image…');
   const image = await normalizeImage(file);
   onProgress('Loading free OCR engine (the first scan downloads language data)…');
-  const {createWorker} = await import(OCR_MODULE);
+  const createWorker = await loadOcrFactory(onProgress);
   const worker = await createWorker('eng', 1, {
     logger: message => {
       if (message.status === 'recognizing text') onProgress('Reading receipt… '+Math.round((message.progress || 0)*100)+'%');
