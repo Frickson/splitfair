@@ -1,5 +1,6 @@
 
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.0/+esm';
+import { scanReceipt } from './receipt-ocr.js';
 const $=id=>document.getElementById(id);
 const safe=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const show=(id,yes=true)=>$(id).classList.toggle('hidden',!yes);
@@ -146,12 +147,66 @@ function renderShares(){
  if(mode==='percent'){ids.forEach((m,i)=>{const base=Math.floor(10000/ids.length),extra=i<10000%ids.length?1:0;document.querySelector('[data-share="'+m.user_id+'"]').value=((base+extra)/100).toFixed(2)})}
  if(edit&&mode==='exact'){const e=expenses.find(x=>x.id===edit);for(const m of ids){document.querySelector('[data-share="'+m.user_id+'"]').value=(Number(e?.shares?.[m.user_id]||0)/100).toFixed(2)}}
 }
-function resetForm(){edit=null;$('expenseForm').reset();$('expenseHeading').textContent='Add expense';$('saveExpense').textContent='+ Add expense';show('cancelEdit',false);selected=new Set(members.map(m=>m.user_id));renderPeople();if(current)$('payer').value=current.id}
+function resetForm(){edit=null;clearReceiptUi();$('expenseForm').reset();$('expenseHeading').textContent='Add expense';$('saveExpense').textContent='+ Add expense';show('cancelEdit',false);selected=new Set(members.map(m=>m.user_id));renderPeople();if(current)$('payer').value=current.id}
 $('participants').onchange=e=>{const id=e.target.dataset.part;if(!id)return;if(e.target.checked)selected.add(id);else selected.delete(id);renderShares()};
 $('splitMode').onchange=renderShares;
 $('cancelEdit').onclick=resetForm;
+
+// Receipt photo recognition runs entirely in a browser Web Worker (free).
+let receiptPreviewUrl=null, receiptBusy=false, receiptToken=0;
+function clearReceiptUi(){
+ receiptToken++;
+ if(receiptPreviewUrl){URL.revokeObjectURL(receiptPreviewUrl);receiptPreviewUrl=null}
+ $('receiptImage').value='';$('receiptCamera').value='';
+ $('receiptPreview').removeAttribute('src');
+ $('receiptRecognizedText').textContent='';
+ $('receiptDetected').textContent='';
+ $('receiptScanStatus').textContent='The first scan downloads OCR language data. Images are processed on your device.';
+ show('receiptScanResult',false);
+}
+$('pickReceipt').onclick=()=>$('receiptImage').click();
+$('takeReceipt').onclick=()=>$('receiptCamera').click();
+async function handleReceiptPhoto(file){
+ if(!file||receiptBusy)return;
+ if(!file.type.startsWith('image/')||file.size>15*1024*1024||file.size===0){
+  notify('Choose a receipt image under 15 MB. JPEG or PNG works best.');return;
+ }
+ clearReceiptUi();
+ const ticket=receiptToken;
+ const startingGroup=group?.id;
+ receiptBusy=true;
+ $('pickReceipt').disabled=true;$('takeReceipt').disabled=true;$('saveExpense').disabled=true;
+ const status=$('receiptScanStatus');
+ receiptPreviewUrl=URL.createObjectURL(file);
+ $('receiptPreview').src=receiptPreviewUrl;
+ show('receiptScanResult');
+ try {
+  const data=await scanReceipt(file,message=>{if(ticket===receiptToken)status.textContent=message});
+  if(ticket!==receiptToken||group?.id!==startingGroup)return;
+  if(data.merchant&&!$('expenseTitle').value.trim())$('expenseTitle').value=data.merchant.slice(0,160);
+  if(data.total!==null)$('expenseAmount').value=data.total.toFixed(2);
+  const parts=[];
+  if(data.merchant)parts.push('Merchant: '+data.merchant);
+  if(data.total!==null)parts.push((data.confidence==='labeled'?'Total':'Possible total')+': '+data.total.toFixed(2));
+  if(data.date)parts.push('Receipt date: '+data.date);
+  $('receiptDetected').textContent=parts.join(' · ')||'No receipt details detected.';
+  $('receiptRecognizedText').textContent=data.text||'No readable text found.';
+  status.textContent=data.total===null
+   ?'OCR finished, but no total was confidently identified. Enter the amount manually.'
+   :data.confidence==='labeled'
+     ?'OCR finished. Check the merchant, bill total and participants before saving.'
+     :'OCR finished. The suggested total may not be the amount due — verify it carefully.';
+ }catch(err){
+  if(ticket===receiptToken)status.textContent='Could not scan this image: '+(err?.message||'Unknown error')+'. Try a clear JPEG or PNG, or enter the amount manually.';
+ }finally{
+  receiptBusy=false;
+  $('pickReceipt').disabled=false;$('takeReceipt').disabled=false;$('saveExpense').disabled=false;
+ }
+}
+$('receiptImage').onchange=e=>handleReceiptPhoto(e.target.files?.[0]);
+$('receiptCamera').onchange=e=>handleReceiptPhoto(e.target.files?.[0]);
 $('expenseForm').onsubmit=async event=>{
- event.preventDefault();if(!group)return;
+ event.preventDefault();if(!group||receiptBusy)return;
  const n=amount($('expenseAmount').value),ids=members.filter(m=>selected.has(m.user_id)).map(m=>m.user_id),mode=$('splitMode').value;
  if(!n||n>100000000000||!ids.length){notify('Enter valid amount and participants');return}
  let shares=equal(n,ids);
