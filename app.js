@@ -160,7 +160,10 @@ function render(){
  $('settlements').innerHTML=result.settle.length?result.settle.map(x=>'<div class="settlement"><span>'+safe(person(x.from))+' pays '+safe(person(x.to))+'</span><div class="actions"><strong>'+money(x.n)+'</strong><button class="btn slim" data-pay="'+x.from+'|'+x.to+'|'+x.n+'" '+(x.from===current.id?'':'disabled')+'>Record paid</button></div></div>').join(''):'<div class="empty">All settled ✓</div>';
  const history=[...expenses.map(x=>({...x,type:'expense'})),...payments.map(x=>({...x,type:'payment'}))].sort((a,b)=>b.created_at.localeCompare(a.created_at));
  $('historyCount').textContent=history.length+' items';
- $('history').innerHTML=history.length?history.map(x=>'<div class="history"><div class="info"><strong>'+safe(x.type==='expense'?x.title:'Payment recorded')+'</strong><div class="sub">'+(x.type==='expense'?'Paid by '+safe(person(x.paid_by)):safe(person(x.from_user))+' → '+safe(person(x.to_user)))+' · '+new Date(x.created_at).toLocaleDateString('en-SG')+'</div></div><div><div class="money">'+money(Number(x.amount_cents))+'</div><div class="actions">'+(x.type==='payment'&&x.proof_path?'<button class="btn slim" data-view-proof="'+safe(x.id)+'">View proof</button>':'')+(x.created_by===current.id?(x.type==='expense'?'<button class="btn slim" data-edit="'+x.id+'">Edit</button>':'')+'<button class="btn slim danger" data-delete="'+x.type+'|'+x.id+'">'+(x.type==='payment'?'Undo':'Delete')+'</button>':'')+'</div></div></div>').join(''):'<div class="empty">No expenses yet</div>';
+ $('history').innerHTML=history.length?history.map(x=>'<div class="history"><div class="info"><strong>'+safe(x.type==='expense'?x.title:'Payment recorded')+'</strong><div class="sub">'+(x.type==='expense'?'Paid by '+safe(person(x.paid_by)):safe(person(x.from_user))+' → '+safe(person(x.to_user)))+' · '+new Date(x.created_at).toLocaleDateString('en-SG')+'</div></div><div><div class="money">'+money(Number(x.amount_cents))+'</div><div class="actions">'+(x.type==='payment'&&x.proof_path?'<button class="btn slim" data-view-proof="'+safe(x.id)+'">View proof</button>':'')+
+ (x.type==='expense'&&x.receipt_path?'<button class="btn slim" data-view-receipt="'+safe(x.id)+'">View receipt</button><button class="btn slim" data-download-receipt="'+safe(x.id)+'">Download</button>':'')+
+ (x.type==='expense'&&x.created_by===current.id?'<button class="btn slim" data-attach-receipt="'+safe(x.id)+'">'+(x.receipt_path?'Replace receipt':'Attach receipt')+'</button>':'')+
+ (x.created_by===current.id?(x.type==='expense'?'<button class="btn slim" data-edit="'+x.id+'">Edit</button>':'')+'<button class="btn slim danger" data-delete="'+x.type+'|'+x.id+'">'+(x.type==='payment'?'Undo':'Delete')+'</button>':'')+'</div></div></div>').join(''):'<div class="empty">No expenses yet</div>';
  $('payer').innerHTML=members.map(m=>'<option value="'+m.user_id+'">'+safe(m.display_name)+'</option>').join('');
  if(!edit)$('payer').value=current.id;
  renderPeople();
@@ -184,10 +187,11 @@ $('participants').onchange=e=>{const id=e.target.dataset.part;if(!id)return;if(e
 $('splitMode').onchange=renderShares;
 $('cancelEdit').onclick=resetForm;
 
-// Receipt photo recognition runs entirely in a browser Web Worker (free).
+// Receipt photos are analyzed by Gemini and retained only after an expense is saved.
+let pendingReceiptFile=null;
 let receiptPreviewUrl=null, receiptBusy=false, receiptToken=0;
 function clearReceiptUi(){
- receiptToken++;
+ receiptToken++;pendingReceiptFile=null;
  if(receiptPreviewUrl){URL.revokeObjectURL(receiptPreviewUrl);receiptPreviewUrl=null}
  $('receiptImage').value='';$('receiptCamera').value='';
  $('receiptPreview').removeAttribute('src');
@@ -205,6 +209,7 @@ async function handleReceiptPhoto(file){
   notify('Choose a receipt image under 15 MB. JPEG or PNG works best.');return;
  }
  clearReceiptUi();
+ pendingReceiptFile=file;
  const ticket=receiptToken;
  const startingGroup=group?.id;
  receiptBusy=true;
@@ -298,6 +303,96 @@ async function handleReceiptPhoto(file){
 }
 $('receiptImage').onchange=e=>handleReceiptPhoto(e.target.files?.[0]);
 $('receiptCamera').onchange=e=>handleReceiptPhoto(e.target.files?.[0]);
+
+const RECEIPT_BUCKET='splitfair-expense-receipts';
+let historyReceiptTarget=null, viewerObjectUrl=null,viewerFileName='receipt.jpg', viewerDownloadBlob=null;
+const jpegReceipt=async file=>{
+ if(!file||!file.type.startsWith('image/')||file.size>15*1024*1024||file.size===0)
+  throw Error('Choose a receipt photo under 15 MB.');
+ const blobUrl=URL.createObjectURL(file);
+ try{
+  const img=new Image();
+  await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(Error('Receipt image could not be opened.'));img.src=blobUrl;});
+  const max=2100, scale=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight));
+  const canvas=document.createElement('canvas');
+  canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));
+  canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));
+  const ctx=canvas.getContext('2d',{alpha:false});
+  if(!ctx)throw Error('Image processing is unavailable.');
+  ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(img,0,0,canvas.width,canvas.height);
+  const output=await new Promise((resolve,reject)=>canvas.toBlob(x=>x?resolve(x):reject(Error('Could not compress receipt.')),'image/jpeg',0.82));
+  if(output.size>5*1024*1024)throw Error('Receipt photo remains above 5 MB. Choose a smaller photo.');
+  return output;
+ }finally{URL.revokeObjectURL(blobUrl)}
+};
+async function attachExpenseReceipt(expense,file){
+ if(!expense||expense.created_by!==current?.id)throw Error('Only the expense creator can attach a receipt.');
+ if(!group||expense.group_id!==group.id)throw Error('Select the correct group.');
+ const blob=await jpegReceipt(file);
+ const path=expense.group_id+'/'+expense.id+'/'+crypto.randomUUID()+'.jpg';
+ const uploaded=await client.storage.from(RECEIPT_BUCKET).upload(path,blob,{contentType:'image/jpeg',cacheControl:'3600',upsert:false});
+ if(uploaded.error)throw uploaded.error;
+ let saved=false;
+ try{
+  const update=await client.from('expenses').update({receipt_path:path})
+   .eq('id',expense.id).eq('group_id',expense.group_id).eq('created_by',current.id)
+   .select('id,receipt_path').single();
+  if(update.error)throw update.error;
+  saved=true;
+ }finally{
+  if(!saved){
+   const cleanup=await client.storage.from(RECEIPT_BUCKET).remove([path]);
+   if(cleanup.error)console.warn('SplitFair receipt cleanup failed',cleanup.error);
+  }
+ }
+ if(expense.receipt_path&&expense.receipt_path!==path){
+  const cleanup=await client.storage.from(RECEIPT_BUCKET).remove([expense.receipt_path]);
+  if(cleanup.error)console.warn('Old receipt cleanup failed',cleanup.error);
+ }
+ return path;
+}
+function closeReceiptViewer(){
+ $('receiptViewer').close();
+ $('receiptViewerImage').removeAttribute('src');
+ if(viewerObjectUrl){URL.revokeObjectURL(viewerObjectUrl);viewerObjectUrl=null}
+ viewerDownloadBlob=null;
+}
+$('closeReceiptViewer').onclick=closeReceiptViewer;
+$('receiptViewer').addEventListener('close',()=>{
+ $('receiptViewerImage').removeAttribute('src');
+ if(viewerObjectUrl){URL.revokeObjectURL(viewerObjectUrl);viewerObjectUrl=null}
+ viewerDownloadBlob=null;
+});
+function triggerReceiptDownload(blob,name){
+ const url=URL.createObjectURL(blob),a=document.createElement('a');
+ a.href=url;a.download=name;
+ document.body.appendChild(a);a.click();a.remove();
+ setTimeout(()=>URL.revokeObjectURL(url),60000);
+}
+$('downloadViewedReceipt').onclick=()=>{
+ if(viewerDownloadBlob)triggerReceiptDownload(viewerDownloadBlob,viewerFileName);
+};
+async function getExpenseReceipt(expense){
+ if(!expense?.receipt_path)throw Error('No receipt is attached.');
+ const {data,error}=await client.storage.from(RECEIPT_BUCKET).download(expense.receipt_path);
+ if(error)throw error;
+ return data;
+}
+$('historyReceiptFile').onchange=async e=>{
+ const file=e.target.files?.[0],targetId=historyReceiptTarget;
+ e.target.value='';historyReceiptTarget=null;
+ if(!file||!targetId)return;
+ const expense=expenses.find(x=>x.id===targetId);
+ if(!expense)return notify('Expense no longer exists.');
+ try{
+  notify('Saving receipt to private group storage…');
+  await attachExpenseReceipt(expense,file);
+  notify('Receipt saved. Group members can view or download it.');
+  await refresh();
+ }catch(err){notify('Unable to save receipt: '+(err.message||'Unknown error'))}
+};
+
 $('expenseForm').onsubmit=async event=>{
  event.preventDefault();if(!group||receiptBusy)return;
  const n=amount($('expenseAmount').value),ids=members.filter(m=>selected.has(m.user_id)).map(m=>m.user_id),mode=$('splitMode').value;
@@ -316,9 +411,51 @@ $('expenseForm').onsubmit=async event=>{
  }
  const payload={group_id:group.id,title:$('expenseTitle').value.trim(),amount_cents:n,paid_by:$('payer').value,shares,created_by:current.id};
  if(!payload.title){notify('Description required');return}
- try{unwrap(edit?await client.from('expenses').update(payload).eq('id',edit).eq('group_id',group.id):await client.from('expenses').insert(payload));notify(edit?'Expense updated':'Expense added');resetForm();await refresh()}catch(e){notify(e.message)}
+ try{
+  const oldExpense=edit?expenses.find(x=>x.id===edit):null;
+  const saved=unwrap(edit
+   ?await client.from('expenses').update(payload).eq('id',edit).eq('group_id',group.id).select('id,group_id,created_by,receipt_path').single()
+   :await client.from('expenses').insert(payload).select('id,group_id,created_by,receipt_path').single());
+  const receiptToSave=pendingReceiptFile;
+  let message=edit?'Expense updated':'Expense added';
+  if(receiptToSave){
+   try{await attachExpenseReceipt(oldExpense||saved,receiptToSave);message+=' with receipt'}
+   catch(err){message+='; receipt upload failed: '+(err.message||'Unknown error')+'. You can attach it from History.'}
+  }
+  resetForm();await refresh();notify(message);
+ }catch(e){notify(e.message)}
 };
 $('history').onclick=async e=>{
+ const receiptButton=e.target.closest('[data-view-receipt],[data-download-receipt],[data-attach-receipt]');
+ if(receiptButton){
+  const expense=expenses.find(x=>x.id===(receiptButton.dataset.viewReceipt||receiptButton.dataset.downloadReceipt||receiptButton.dataset.attachReceipt));
+  if(!expense)return;
+  if(receiptButton.hasAttribute('data-attach-receipt')){
+   if(expense.created_by!==current.id)return;
+   historyReceiptTarget=expense.id;
+   $('historyReceiptFile').click();
+   return;
+  }
+  const downloading=receiptButton.hasAttribute('data-download-receipt');
+  const original=receiptButton.textContent;
+  receiptButton.disabled=true;receiptButton.textContent=downloading?'Downloading…':'Loading…';
+  try{
+   const blob=await getExpenseReceipt(expense);
+   const filename='splitfair-receipt-'+expense.id.slice(0,8)+'.jpg';
+   if(downloading)triggerReceiptDownload(blob,filename);
+   else{
+    if($('receiptViewer').open)closeReceiptViewer();
+    if(viewerObjectUrl)URL.revokeObjectURL(viewerObjectUrl);
+    viewerObjectUrl=URL.createObjectURL(blob);
+    viewerDownloadBlob=blob;viewerFileName=filename;
+    $('receiptViewerTitle').textContent='Receipt — '+expense.title;
+    $('receiptViewerImage').src=viewerObjectUrl;
+    $('receiptViewer').showModal();
+   }
+  }catch(err){notify('Unable to load receipt: '+(err.message||'Unknown error'))}
+  finally{receiptButton.disabled=false;receiptButton.textContent=original}
+  return;
+ }
  const proofButton=e.target.closest('[data-view-proof]');
  if(proofButton){
   const payment=payments.find(x=>x.id===proofButton.dataset.viewProof);
@@ -337,8 +474,12 @@ $('history').onclick=async e=>{
  if(!deleteButton)return;const [type,id]=deleteButton.dataset.delete.split('|');
  if(!confirm('Delete this '+type+'?'))return;
  try{
-  const previous=type==='payment'?payments.find(x=>x.id===id):null;
+  const previous=type==='payment'?payments.find(x=>x.id===id):expenses.find(x=>x.id===id);
   unwrap(await client.from(type==='expense'?'expenses':'payments').delete().eq('id',id).eq('group_id',group.id));
+  if(type==='expense'&&previous?.receipt_path){
+   const cleanup=await client.storage.from(RECEIPT_BUCKET).remove([previous.receipt_path]);
+   if(cleanup.error)notify('Expense removed, but receipt cleanup failed: '+cleanup.error.message);
+  }
   if(previous?.proof_path){
    const cleanup=await client.storage.from('splitfair-payment-proofs').remove([previous.proof_path]);
    if(cleanup.error)notify('Payment removed, but proof cleanup failed: '+cleanup.error.message);
