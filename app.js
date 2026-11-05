@@ -197,7 +197,7 @@ function clearReceiptUi(){
  $('receiptPreview').removeAttribute('src');
  $('receiptRecognizedText').textContent='';
  $('receiptDetected').textContent='';
- $('receiptScanStatus').textContent='The first scan downloads OCR language data. Images are processed on your device.';
+ $('receiptScanStatus').textContent='Receipt photos are analyzed with Gemini. Your selected photo is kept private with the expense when you save.';
  delete $('receiptScanStatus').dataset.state;
  show('receiptScanResult',false);
 }
