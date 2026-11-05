@@ -236,9 +236,39 @@ async function handleReceiptPhoto(file){
   if(typeof data.total==='number')parts.push('Final total: '+data.total.toFixed(2));
   if(data.currency)parts.push('Currency: '+data.currency);
   if(data.date)parts.push('Receipt date: '+data.date);
-  $('receiptDetected').textContent=parts.join(' · ')||'No receipt details detected.';
+  const detected=$('receiptDetected');
+  detected.textContent=parts.join(' · ')||'No directly visible merchant name detected.';
+  // An inferred merchant is a suggestion, not a name printed on the receipt.
+  if(!data.merchant && data.merchant_suggestion){
+    const suggestion=String(data.merchant_suggestion).trim().slice(0,160);
+    const confidence=['high','medium','low'].includes(data.merchant_confidence)?data.merchant_confidence:'low';
+    const wrapper=document.createElement('div');
+    wrapper.style.marginTop='10px';
+    const label=document.createElement('p');
+    label.className='tiny';
+    label.textContent='Possible restaurant (inferred from menu items, '+confidence+' confidence): '+suggestion;
+    wrapper.appendChild(label);
+    if(data.merchant_evidence){
+      const why=document.createElement('p');
+      why.className='tiny muted';
+      why.textContent='Why: '+String(data.merchant_evidence).slice(0,250);
+      wrapper.appendChild(why);
+    }
+    const use=document.createElement('button');
+    use.type='button';use.className='btn slim';
+    use.textContent='Use suggested restaurant';
+    use.onclick=()=>{
+      nameField.value=suggestion;
+      nameField.dispatchEvent(new Event('input',{bubbles:true}));
+      notify('Suggested restaurant selected — please verify it.');
+      use.disabled=true;use.textContent='Selected';
+    };
+    wrapper.appendChild(use);
+    detected.appendChild(wrapper);
+  }
   $('receiptRecognizedText').textContent=[
    data.notes?'Notes: '+data.notes:'',
+   data.merchant_suggestion?'Suggested merchant (not printed): '+data.merchant_suggestion+' ('+(data.merchant_confidence||'unverified')+')':'',
    (data.items||[]).length?'Items:\n'+data.items.map(x=>x.description+' · Qty '+(x.quantity??'?')+' · '+(x.total?.toFixed(2)??'?')).join('\n'):'',
    typeof data.subtotal==='number'?'Subtotal: '+data.subtotal.toFixed(2):'',
    typeof data.tax==='number'?'Tax: '+data.tax.toFixed(2):'',
