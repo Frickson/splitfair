@@ -162,6 +162,7 @@ function clearReceiptUi(){
  $('receiptRecognizedText').textContent='';
  $('receiptDetected').textContent='';
  $('receiptScanStatus').textContent='The first scan downloads OCR language data. Images are processed on your device.';
+ delete $('receiptScanStatus').dataset.state;
  show('receiptScanResult',false);
 }
 $('pickReceipt').onclick=()=>$('receiptImage').click();
@@ -177,6 +178,7 @@ async function handleReceiptPhoto(file){
  receiptBusy=true;
  $('pickReceipt').disabled=true;$('takeReceipt').disabled=true;$('saveExpense').disabled=true;
  const status=$('receiptScanStatus');
+ status.dataset.state='pending';
  receiptPreviewUrl=URL.createObjectURL(file);
  $('receiptPreview').src=receiptPreviewUrl;
  show('receiptScanResult');
@@ -204,6 +206,7 @@ async function handleReceiptPhoto(file){
   $('receiptDetected').textContent=parts.join(' · ')||'No receipt details detected.';
   $('receiptRecognizedText').textContent=data.text||'No readable text found.';
   const hasAny=filled.length>0;
+  status.dataset.state=hasAny?'success':'error';
   status.textContent=!hasAny
     ?'OCR finished, but no bill amount or merchant was identified. See the recognized text below, or enter details manually.'
     : '✓ Auto-filled '+filled.join(' and ')+'. Please review the amount and split before saving. '
@@ -214,6 +217,7 @@ async function handleReceiptPhoto(file){
   }
  }catch(err){
   if(ticket===receiptToken){
+   status.dataset.state='error';
    status.textContent='OCR could not start or finish: '+(err?.message||'Unknown error')+'. Check your connection, refresh, or enter the amount manually.';
    notify('Receipt scan failed. See the detailed message above.');
    console.warn('SplitFair OCR error:',err);
