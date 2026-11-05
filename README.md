@@ -1,3 +1,15 @@
+## Free receipt OCR (mobile + desktop)
+
+SplitFair can now scan receipt photos **without paid OCR services, servers, or API keys**. In the **Add expense** form:
+1. Choose **Choose receipt photo** (from gallery/files) or **Take photo** (uses the rear camera on compatible phones).
+2. Tesseract.js v7 runs locally inside the browser using WebAssembly. First use downloads OCR code and English language data; allow internet access for this first download. Processing uses the user's device CPU/RAM and may take longer on slower phones.
+3. The app proposes the merchant and total, shows any detected receipt date for review, and displays extracted text. Users must double-check the bill total and edit it if necessary, then choose participants and save the expense normally.
+4. The original receipt photo and recognized raw text **are not uploaded to Supabase or stored with the expense** by this MVP feature. Only the ordinary expense fields are saved after the user confirms. Payment proof screenshots are a separate, optional feature with private Storage.
+
+Supported input depends on the browser's ability to decode the photo; JPEG or PNG works best. The scanner accepts images up to 15 MB and scales them down to 1800px for memory-friendly OCR. It does not process PDFs or automatically split individual line items. OCR can confuse subtotal, tax, gratuity and amount due, particularly on blurry or non-English receipts. **Always verify before saving.**
+
+OCR library source: [Tesseract.js](https://github.com/naptha/tesseract.js) (loaded on demand from a pinned jsDelivr CDN URL). No charges are incurred for OCR compute because processing runs on the user's device.
+
 ## Profile and settlement screenshot proof
 
 **Edit your profile**
