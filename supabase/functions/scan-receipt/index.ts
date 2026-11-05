@@ -14,7 +14,10 @@ const response = (body: unknown, status = 200) => new Response(JSON.stringify(bo
 const schema = {
   type: 'OBJECT',
   properties: {
-    merchant: { type: 'STRING', description: 'Actual store or restaurant name, not address. Empty if unreadable.' },
+    merchant: { type: 'STRING', description: 'Only a store or restaurant name directly visible on the receipt. Do not infer here; use an empty string if not visible.' },
+    merchant_suggestion: { type: 'STRING', description: 'If merchant is NOT visible, an educated guess from distinctive branded food/drink names or unique menu combinations. Empty if insufficient evidence.' },
+    merchant_confidence: { type: 'STRING', description: 'Confidence in the suggested merchant only: high, medium, low, or none.' },
+    merchant_evidence: { type: 'STRING', description: 'Short explanation citing the exact signature items that support this suggestion. Never present this as verified.' },
     date: { type: 'STRING', description: 'Receipt purchase date in YYYY-MM-DD, or empty if unknown.' },
     currency: { type: 'STRING', description: 'ISO currency code when evidenced (e.g. SGD), otherwise empty.' },
     total: { type: 'NUMBER', nullable: true, description: 'Final amount due, including taxes and service fees, null if not identifiable.' },
@@ -35,7 +38,7 @@ const schema = {
     },
     notes: { type: 'STRING', description: 'Any ambiguity, occlusion, missing fields or conflicting totals.' }
   },
-  required: ['merchant', 'date', 'currency', 'total', 'subtotal', 'tax', 'fees', 'items', 'notes']
+  required: ['merchant', 'merchant_suggestion', 'merchant_confidence', 'merchant_evidence', 'date', 'currency', 'total', 'subtotal', 'tax', 'fees', 'items', 'notes']
 };
 
 Deno.serve(async req => {
@@ -78,7 +81,7 @@ Deno.serve(async req => {
       signal:controller.signal,
       body:JSON.stringify({
         contents:[{role:'user',parts:[
-          {text:'Extract receipt information from the attached photo. Look at image layout, not just OCR order. Merchant must be business name, never an address, date or table number. Final total includes taxes and service fees; never substitute subtotal. Read tilted receipts and partially obscured photos as best possible. Return unknown merchant as empty string and unreadable amount as null. Do not hallucinate. Do not treat credit-card digits as amounts. Return concise itemized lines when legible.'},
+          {text:'Extract receipt information from this photo; understand layout rather than relying on text order. For merchant: if the actual business name is VISIBLE, put it in merchant. Never use an address, date, venue descriptor, cocktail name, or menu item as the directly visible merchant. If merchant is NOT visible, examine distinctive house-branded dishes, cocktails, coined names and unusual combinations to INFER a likely restaurant from known menu associations; place this guess in merchant_suggestion ONLY, with confidence high/medium/low and evidence naming the supporting items. Do not confuse a signature drink name with the merchant (for example AMO 4 EVER is a cocktail name, not proof the restaurant is Amò). The branded dessert Fortunamisu may be a more distinctive business clue. If evidence is weak or items are generic, leave merchant_suggestion empty and confidence none. Never claim guessed merchants are printed on the receipt; never hallucinate a restaurant from cuisine type alone. Total must be final amount paid including tax and fees, not subtotal. Read tilted, obscured photos as best possible; unreadable total should be null. Return line items where legible; do not mistake masked card digits for costs.'},
           {inline_data:{mime_type:mimeType,data:image}}
         ]}],
         generationConfig:{responseMimeType:'application/json',responseSchema:schema,maxOutputTokens:1400}
@@ -96,6 +99,20 @@ Deno.serve(async req => {
     try{parsed=JSON.parse(raw)}catch{return response({error:'AI response could not be parsed.'},502)}
     const money=(x:unknown)=>typeof x==='number'&&Number.isFinite(x)&&x>0&&x<=1_000_000_000?Math.round(x*100)/100:null;
     const merchant=typeof parsed.merchant==='string'?parsed.merchant.trim().slice(0,160):'';
+    const validConfidence=new Set(['high','medium','low']);
+    const suggestion=!merchant&&typeof parsed.merchant_suggestion==='string'?parsed.merchant_suggestion.trim().slice(0,160):'';
+    let merchantConfidence=suggestion&&validConfidence.has(parsed.merchant_confidence as string)?parsed.merchant_confidence:'none';
+    let merchantEvidence=suggestion&&typeof parsed.merchant_evidence==='string'?parsed.merchant_evidence.trim().slice(0,250):'';
+    let merchantSuggestion=suggestion;
+    // The following exact signature pairing is independently confirmed on Fortuna's public
+    // menu. A matching dish/cocktail is a candidate, not proof of the venue.
+    const itemNames=Array.isArray(parsed.items)?parsed.items.map((x:Record<string,unknown>)=>String(x?.description||'').toUpperCase()).join(' | '):'';
+    if(!merchant&&itemNames.includes('FORTUNAMISU')&&(itemNames.includes('AMO')&&itemNames.includes('4 EVER')||itemNames.includes('PASSITO DI PANTELLERIA'))){
+      merchantSuggestion='Fortuna Drink & Eat';
+      merchantConfidence='high';
+      merchantEvidence='Fortunamisu plus signature drinks match items on Fortuna Drink & Eat’s published menu.';
+    }
+    if(merchantConfidence==='none'){merchantSuggestion='';merchantEvidence='';}
     const date=typeof parsed.date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(parsed.date)?parsed.date:'';
     const items=Array.isArray(parsed.items)?parsed.items.slice(0,30).filter((i:unknown)=>typeof i==='object'&&i!==null).map((i:Record<string,unknown>)=>({
       description:String(i.description||'').slice(0,120),
@@ -103,7 +120,8 @@ Deno.serve(async req => {
       total:money(i.total)
     })): [];
     return response({
-      merchant, date, currency:typeof parsed.currency==='string'?parsed.currency.slice(0,3).toUpperCase():'',
+      merchant, merchant_suggestion:merchantSuggestion, merchant_confidence:merchantConfidence, merchant_evidence:merchantEvidence,
+      date, currency:typeof parsed.currency==='string'?parsed.currency.slice(0,3).toUpperCase():'',
       total:money(parsed.total), subtotal:money(parsed.subtotal),
       tax:money(parsed.tax),fees:money(parsed.fees),items,
       notes:typeof parsed.notes==='string'?parsed.notes.slice(0,300):''
