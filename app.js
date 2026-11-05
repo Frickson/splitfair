@@ -1,6 +1,38 @@
 
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.0/+esm';
-import { scanReceipt } from './receipt-ocr.js?v=2';
+// Receipt analysis uses Gemini via a protected Supabase Edge Function.
+// The Gemini API key is never present in browser source code.
+async function scanReceiptWithGemini(file,onProgress=()=>{}){
+  if(!file?.type.startsWith('image/')||file.size>15*1024*1024||file.size===0)throw Error('Choose an image under 15 MB.');
+  onProgress('Preparing photo for AI analysis…');
+  const img=new Image(),url=URL.createObjectURL(file);
+  try{
+    await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(Error('Image could not be opened. Try JPEG or PNG.'));img.src=url;});
+    const maxSide=1500,ratio=Math.min(1,maxSide/Math.max(img.naturalWidth,img.naturalHeight));
+    const canvas=document.createElement('canvas');
+    canvas.width=Math.round(img.naturalWidth*ratio);canvas.height=Math.round(img.naturalHeight*ratio);
+    const ctx=canvas.getContext('2d',{alpha:false});
+    if(!ctx)throw Error('Image processing unavailable.');
+    ctx.fillStyle='white';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    const blob=await new Promise((resolve,reject)=>canvas.toBlob(x=>x?resolve(x):reject(Error('Could not compress receipt.')),'image/jpeg',0.75));
+    if(blob.size>2_900_000)throw Error('Compressed photo is too large. Try a smaller image.');
+    onProgress('Sending receipt securely for Gemini analysis…');
+    const imageBase64=await new Promise((resolve,reject)=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve(String(reader.result).split(',')[1]);
+      reader.onerror=()=>reject(Error('Could not read compressed receipt.'));
+      reader.readAsDataURL(blob);
+    });
+    const {data,error}=await client.functions.invoke('scan-receipt',{body:{image:imageBase64,mimeType:'image/jpeg'}});
+    if(error){
+      let details=error.message||'AI scan failed';
+      try{if(error.context?.json){const body=await error.context.json();details=body.error||details}}catch{}
+      throw Error(details);
+    }
+    if(data?.error)throw Error(data.error);
+    return data;
+  }finally{URL.revokeObjectURL(url)}
+}
 const $=id=>document.getElementById(id);
 const safe=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const show=(id,yes=true)=>$(id).classList.toggle('hidden',!yes);
@@ -183,7 +215,7 @@ async function handleReceiptPhoto(file){
  $('receiptPreview').src=receiptPreviewUrl;
  show('receiptScanResult');
  try {
-  const data=await scanReceipt(file,message=>{if(ticket===receiptToken)status.textContent=message});
+  const data=await scanReceiptWithGemini(file,message=>{if(ticket===receiptToken)status.textContent=message});
   if(ticket!==receiptToken||group?.id!==startingGroup)return;
   const nameField=$('expenseTitle'),amountField=$('expenseAmount');
   const filled=[];
@@ -194,26 +226,33 @@ async function handleReceiptPhoto(file){
    nameField.dispatchEvent(new Event('input',{bubbles:true}));
    filled.push('description');
   }
-  if(data.total!==null){
+  if(typeof data.total==='number'&&data.total>0){
    amountField.value=data.total.toFixed(2);
    amountField.dispatchEvent(new Event('input',{bubbles:true}));
    filled.push('amount');
   }
   const parts=[];
   if(data.merchant)parts.push('Merchant: '+data.merchant);
-  if(data.total!==null)parts.push((data.confidence==='labeled'?'Total':'Possible total')+': '+data.total.toFixed(2));
+  if(typeof data.total==='number')parts.push('Final total: '+data.total.toFixed(2));
+  if(data.currency)parts.push('Currency: '+data.currency);
   if(data.date)parts.push('Receipt date: '+data.date);
   $('receiptDetected').textContent=parts.join(' · ')||'No receipt details detected.';
-  $('receiptRecognizedText').textContent=data.text||'No readable text found.';
+  $('receiptRecognizedText').textContent=[
+   data.notes?'Notes: '+data.notes:'',
+   (data.items||[]).length?'Items:\n'+data.items.map(x=>x.description+' · Qty '+(x.quantity??'?')+' · '+(x.total?.toFixed(2)??'?')).join('\n'):'',
+   typeof data.subtotal==='number'?'Subtotal: '+data.subtotal.toFixed(2):'',
+   typeof data.tax==='number'?'Tax: '+data.tax.toFixed(2):'',
+   typeof data.fees==='number'?'Fees: '+data.fees.toFixed(2):''
+  ].filter(Boolean).join('\n\n')||'No additional details were returned.';
   const hasAny=filled.length>0;
   status.dataset.state=hasAny?'success':'error';
   status.textContent=!hasAny
     ?'OCR finished, but no bill amount or merchant was identified. See the recognized text below, or enter details manually.'
     : '✓ Auto-filled '+filled.join(' and ')+'. Please review the amount and split before saving. '
-      +(data.total===null?'The total could not be recognized.':'');
+      +(typeof data.total!=='number'?'The total could not be recognized.':'');
   if(hasAny){
    notify('Receipt scanned — '+filled.join(' and ')+' filled in.');
-   if(data.total!==null)amountField.scrollIntoView({behavior:'smooth',block:'center'});
+   if(typeof data.total==='number')amountField.scrollIntoView({behavior:'smooth',block:'center'});
   }
  }catch(err){
   if(ticket===receiptToken){
