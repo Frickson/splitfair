@@ -183,21 +183,41 @@ async function handleReceiptPhoto(file){
  try {
   const data=await scanReceipt(file,message=>{if(ticket===receiptToken)status.textContent=message});
   if(ticket!==receiptToken||group?.id!==startingGroup)return;
-  if(data.merchant&&!$('expenseTitle').value.trim())$('expenseTitle').value=data.merchant.slice(0,160);
-  if(data.total!==null)$('expenseAmount').value=data.total.toFixed(2);
+  const nameField=$('expenseTitle'),amountField=$('expenseAmount');
+  const filled=[];
+  // The scanner assists data entry; it does not save anything automatically.
+  // For an existing expense being edited, don't unexpectedly replace a description.
+  if(data.merchant&&(!edit||!nameField.value.trim())){
+   nameField.value=data.merchant.slice(0,160);
+   nameField.dispatchEvent(new Event('input',{bubbles:true}));
+   filled.push('description');
+  }
+  if(data.total!==null){
+   amountField.value=data.total.toFixed(2);
+   amountField.dispatchEvent(new Event('input',{bubbles:true}));
+   filled.push('amount');
+  }
   const parts=[];
   if(data.merchant)parts.push('Merchant: '+data.merchant);
   if(data.total!==null)parts.push((data.confidence==='labeled'?'Total':'Possible total')+': '+data.total.toFixed(2));
   if(data.date)parts.push('Receipt date: '+data.date);
   $('receiptDetected').textContent=parts.join(' · ')||'No receipt details detected.';
   $('receiptRecognizedText').textContent=data.text||'No readable text found.';
-  status.textContent=data.total===null
-   ?'OCR finished, but no total was confidently identified. Enter the amount manually.'
-   :data.confidence==='labeled'
-     ?'OCR finished. Check the merchant, bill total and participants before saving.'
-     :'OCR finished. The suggested total may not be the amount due — verify it carefully.';
+  const hasAny=filled.length>0;
+  status.textContent=!hasAny
+    ?'OCR finished, but no bill amount or merchant was identified. See the recognized text below, or enter details manually.'
+    : '✓ Auto-filled '+filled.join(' and ')+'. Please review the amount and split before saving. '
+      +(data.total===null?'The total could not be recognized.':'');
+  if(hasAny){
+   notify('Receipt scanned — '+filled.join(' and ')+' filled in.');
+   if(data.total!==null)amountField.scrollIntoView({behavior:'smooth',block:'center'});
+  }
  }catch(err){
-  if(ticket===receiptToken)status.textContent='Could not scan this image: '+(err?.message||'Unknown error')+'. Try a clear JPEG or PNG, or enter the amount manually.';
+  if(ticket===receiptToken){
+   status.textContent='OCR could not start or finish: '+(err?.message||'Unknown error')+'. Check your connection, refresh, or enter the amount manually.';
+   notify('Receipt scan failed. See the detailed message above.');
+   console.warn('SplitFair OCR error:',err);
+  }
  }finally{
   receiptBusy=false;
   $('pickReceipt').disabled=false;$('takeReceipt').disabled=false;$('saveExpense').disabled=false;
