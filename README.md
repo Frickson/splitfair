@@ -1,3 +1,18 @@
+## AI receipt scanning through Gemini (November 2026)
+
+The SplitFair receipt scanner now sends photos to a **Supabase Edge Function** (`scan-receipt`) that calls Google's Gemini Vision API to extract merchant, purchase date, currency, final total, subtotal, fees and item lines. It fills the description and amount fields, while the user must confirm before saving. It works on mobile browsers and desktops.
+
+**Admin setup (required before scans work):**
+1. Create a Gemini API key at https://aistudio.google.com/api-keys
+2. Open https://supabase.com/dashboard/project/jprqfryawhffqambonbs/settings/functions
+3. Add a secret named **`GEMINI_API_KEY`** with the API key as its value. The value must not go into GitHub, `config.js`, or a website field.
+4. Verify the production redirect/auth settings, open https://frickson.github.io/splitfair/, refresh, and scan a receipt while signed in.
+5. If the API returns an error, check https://supabase.com/dashboard/project/jprqfryawhffqambonbs/functions for the function logs, and check Gemini API quotas/billing in Google AI Studio.
+
+The Edge Function checks the caller's Supabase session, verifies browser origin, and uses a server-side per-user daily scan limit (20 scans per UTC day and at least 8 seconds apart). The Gemini key remains in Supabase Secrets. The browser compresses the image to JPEG before sending it to the function; the function passes it to Google for AI extraction. The image is not stored permanently by SplitFair in this workflow, but Google may process and retain it under the terms of the selected API tier; free-tier data privacy terms matter. Do not submit sensitive personal information unless you and your group members accept those terms.
+
+This approach replaces Tesseract.js as the primary scanner. The old `receipt-ocr.js` is preserved as reference code but is no longer imported by SplitFair. Gemini API availability and free-tier quota depend on the user's Google project and model access; free does not imply unlimited. The scan does **not** create an expense until the user reviews the fields and clicks Save.
+
 ## Free receipt OCR (mobile + desktop)
 
 SplitFair can now scan receipt photos **without paid OCR services, servers, or API keys**. In the **Add expense** form:
